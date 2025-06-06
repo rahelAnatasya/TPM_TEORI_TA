@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:tpm_flora/services/api_service.dart';
 import '../models/plant.dart';
 import '../models/address.dart';
 import '../models/transaction.dart';
@@ -191,6 +192,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       // Save transaction to database
       await TransactionService.addTransaction(transaction);
+
+      // Update plant stock quantity
+      widget.plant.stock_quantity =
+          (widget.plant.stock_quantity ?? 0) - quantity;
+      await ApiService.updatePlant(widget.plant);
 
       // Simulate processing delay
       await Future.delayed(const Duration(seconds: 2));

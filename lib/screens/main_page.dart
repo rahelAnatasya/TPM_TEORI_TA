@@ -64,13 +64,24 @@ class _MainPageState extends State<MainPage> {
   final GlobalKey<_HomePageBodyState> _homePageKey =
       GlobalKey<_HomePageBodyState>();
 
+  // Add callback method for profile updates
+  void _onProfileUpdated() {
+    _loadUserData();
+  }
+
   ImageProvider? _getProfileImage() {
-    if (_currentUser?.profilePicturePath != null &&
-        _currentUser!.profilePicturePath!.isNotEmpty) {
-      return FileImage(File(_currentUser!.profilePicturePath!));
+    try {
+      if (_currentUser?.profilePicturePath != null &&
+          _currentUser!.profilePicturePath!.isNotEmpty) {
+        final file = File(_currentUser!.profilePicturePath!);
+        if (file.existsSync()) {
+          return FileImage(file);
+        }
+      }
+    } catch (e) {
+      print('Error loading profile image: $e');
     }
-    // Return a default placeholder if no image is available
-    return const NetworkImage('https://via.placeholder.com/150');
+    return null;
   }
 
   Future<void> _loadUserData() async {
@@ -108,7 +119,7 @@ class _MainPageState extends State<MainPage> {
       const SearchPage(),
       const SensorPage(),
       const InfoPage(),
-      const ProfilePage(),
+      ProfilePage(onProfileUpdated: _onProfileUpdated), // Pass callback
     ];
   }
 
@@ -134,44 +145,6 @@ class _MainPageState extends State<MainPage> {
   // void _deletePlant(BuildContext context, int? id) { // Likely handled by HomePageBody
   //   // ...
   // }
-
-  void _logout() async {
-    // Restored _logout method
-    bool confirmed =
-        await showDialog<bool>(
-          context: context,
-          builder: (BuildContext context) {
-            return AlertDialog(
-              title: const Text('Logout'),
-              content: const Text('Are you sure you want to logout?'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text(
-                    'Logout',
-                    style: TextStyle(color: Colors.red),
-                  ),
-                ),
-              ],
-            );
-          },
-        ) ??
-        false;
-
-    if (!confirmed) return;
-    await _sessionManager.clearUserSession();
-    if (mounted) {
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginPage()),
-        (Route<dynamic> route) => false,
-      );
-    }
-  }
 
   // Load saved timezone from session and apply
   Future<void> _loadSessionTimeZone() async {
@@ -207,7 +180,7 @@ class _MainPageState extends State<MainPage> {
     return Scaffold(
       appBar: AppBar(
         leading: PopupMenuButton<TimeZoneOption>(
-          icon: const Icon(Icons.language),
+          icon: const Icon(Icons.language, color: Colors.white), // Icon color
           onSelected: (TimeZoneOption selectedZone) async {
             await _sessionManager.saveTimeZone(selectedZone.abbreviation);
             _homePageKey.currentState?.changeTimeZone(selectedZone);
@@ -230,19 +203,36 @@ class _MainPageState extends State<MainPage> {
           tooltip: 'Change Time Zone',
         ),
         automaticallyImplyLeading: false,
-        title: const Text("Flora Plant Store"),
-        backgroundColor: Colors.green[700],
+        title: const Text(
+          "Flora Plant Store",
+          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+        ),
+        centerTitle: true, // Center the title
+        backgroundColor: Colors.green[600], // Darker green for better contrast
+        elevation: 4.0, // Add some elevation
         actions: [
           if (_isAdmin)
             IconButton(
-              icon: const Icon(Icons.add),
+              icon: const Icon(Icons.add, color: Colors.white), // Icon color
               onPressed: _navigateToAddPlant,
               tooltip: 'Add New Plant',
             ),
           IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: _logout,
-            tooltip: 'Logout',
+            icon: const Icon(
+              Icons.refresh,
+              color: Colors.white,
+            ), // Changed from logout to refresh
+            onPressed: () {
+              // Refresh the plant data
+              _homePageKey.currentState?.refreshPlantsFromParent();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Data tanaman telah diperbarui'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+            tooltip: 'Refresh Plants', // Changed tooltip
           ),
         ],
       ),
@@ -255,8 +245,10 @@ class _MainPageState extends State<MainPage> {
             _currentIndex = index;
           });
         },
-        selectedItemColor: Colors.green[800],
-        unselectedItemColor: Colors.grey,
+        selectedItemColor: Colors.green[700], // More vibrant green
+        unselectedItemColor: Colors.grey[600],
+        backgroundColor: Colors.white, // Add a background color
+        elevation: 8.0, // Add some elevation
         items: [
           BottomNavigationBarItem(icon: const Icon(Icons.home), label: 'Home'),
           BottomNavigationBarItem(
@@ -272,7 +264,15 @@ class _MainPageState extends State<MainPage> {
             label: 'Info',
           ),
           BottomNavigationBarItem(
-            icon: CircleAvatar(radius: 12, backgroundImage: _getProfileImage()),
+            icon: CircleAvatar(
+              radius: 14, // Slightly larger
+              backgroundImage: _getProfileImage(),
+              backgroundColor: Colors.grey[200], // Placeholder background
+              child:
+                  _getProfileImage() == null
+                      ? Icon(Icons.person, size: 18, color: Colors.grey[600])
+                      : null,
+            ),
             label: 'Profile',
           ),
         ],
@@ -291,12 +291,12 @@ class HomePageBody extends StatefulWidget {
 class _HomePageBodyState extends State<HomePageBody> {
   final bool _isAdmin = true;
   late Future<List<dynamic>> _plantsFuture;
-  String _currentTime = '';
   TimeZoneOption _selectedTimeZone = TimeZoneOption.wib; // Selected time zone
   String _currencyCode = '';
   String _currencyName = '';
   bool _isLoadingCurrency = false; // Add loading state
   bool _plantsLoaded = false; // Track if plants have been loaded
+  late Stream<DateTime> _timeStream; // Add time stream
   static const Map<TimeZoneOption, String> _currencyCodeMap = {
     TimeZoneOption.wib: 'IDR',
     TimeZoneOption.wita: 'IDR',
@@ -315,17 +315,13 @@ class _HomePageBodyState extends State<HomePageBody> {
     super.initState();
     print('HomePageBody: initState called');
     _loadPlants();
-    _updateTime();
     // initialize currency
     _updateCurrency(_selectedTimeZone);
     _loadExchangeRates();
-    Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted) {
-        _updateTime();
-      } else {
-        timer.cancel();
-      }
-    });
+    _timeStream = Stream.periodic(
+      const Duration(seconds: 1),
+      (_) => DateTime.now(),
+    );
   }
 
   Future<void> _loadExchangeRates() async {
@@ -346,7 +342,6 @@ class _HomePageBodyState extends State<HomePageBody> {
         _selectedTimeZone = newZone;
         _isLoadingCurrency = true; // Set loading to true immediately
       });
-      _updateTime(); // Update time immediately
       _updateCurrency(newZone);
       _loadExchangeRates().then((_) {
         if (mounted) {
@@ -354,21 +349,6 @@ class _HomePageBodyState extends State<HomePageBody> {
             _isLoadingCurrency = false; // Set loading to false when done
           });
         }
-      });
-    }
-  }
-
-  void _updateTime() {
-    final now = DateTime.now();
-    // Convert to selected time zone
-    final timeZoneTime = now.toUtc().add(
-      Duration(hours: _selectedTimeZone.utcOffsetHours),
-    );
-    final formatter = DateFormat('EEEE, dd MMMM yyyy\nHH:mm:ss', 'id_ID');
-    if (mounted) {
-      setState(() {
-        _currentTime =
-            "${formatter.format(timeZoneTime)} (${_selectedTimeZone.abbreviation})";
       });
     }
   }
@@ -484,53 +464,89 @@ class _HomePageBodyState extends State<HomePageBody> {
     return Column(
       children: [
         // Time display container
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.green[50],
-            border: Border(
-              bottom: BorderSide(color: Colors.green[200]!, width: 1),
-            ),
+        Card(
+          elevation: 2.0,
+          margin: const EdgeInsets.all(12.0),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10.0),
           ),
-          child: Column(
-            children: [
-              Text(
-                'Waktu Sekarang (${_selectedTimeZone.abbreviation})', // Update title
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.green[700],
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+              vertical: 12.0,
+              horizontal: 16.0,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.green[50],
+              borderRadius: BorderRadius.circular(10.0),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  'Waktu Saat Ini (${_selectedTimeZone.abbreviation})',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600, // Bolder
+                    color: Colors.green[800], // Darker green
+                  ),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                _currentTime,
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (_isLoadingCurrency)
-                    const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+                const SizedBox(height: 6),
+                // Use StreamBuilder to update only the time text
+                StreamBuilder<DateTime>(
+                  stream: _timeStream,
+                  builder: (context, snapshot) {
+                    final now = DateTime.now();
+                    final timeZoneTime = now.toUtc().add(
+                      Duration(hours: _selectedTimeZone.utcOffsetHours),
+                    );
+                    final formatter = DateFormat(
+                      'EEEE, dd MMMM yyyy\nHH:mm:ss',
+                      'id_ID',
+                    );
+                    final timeString =
+                        "${formatter.format(timeZoneTime)} (${_selectedTimeZone.abbreviation})";
+
+                    return Text(
+                      timeString,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 18, // Larger
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (_isLoadingCurrency)
+                      const SizedBox(
+                        width: 14, // Slightly larger
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.green,
+                          ),
+                        ),
+                      ),
+                    if (_isLoadingCurrency) const SizedBox(width: 10),
+                    Text(
+                      _isLoadingCurrency
+                          ? 'Memuat mata uang...'
+                          : 'Mata Uang: $_currencyName ($_currencyCode)',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.black54,
+                        fontStyle: FontStyle.italic,
                       ),
                     ),
-                  if (_isLoadingCurrency) const SizedBox(width: 8),
-                  Text(
-                    _isLoadingCurrency
-                        ? 'Loading currency...'
-                        : 'Mata Uang: $_currencyName ($_currencyCode)',
-                    style: TextStyle(fontSize: 14, color: Colors.black54),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
         // Plant list
@@ -544,10 +560,26 @@ class _HomePageBodyState extends State<HomePageBody> {
                 print(
                   'MainPage FutureBuilder: Error occurred: ${snapshot.error}',
                 );
-                return Center(child: Text('Error: ${snapshot.error}'));
-              } else if (!snapshot.hasData || snapshot.data == null) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      'Gagal memuat data tanaman.\nMohon periksa koneksi internet Anda.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.red[700], fontSize: 16),
+                    ),
+                  ),
+                );
+              } else if (!snapshot.hasData ||
+                  snapshot.data == null ||
+                  snapshot.data!.isEmpty) {
                 print('MainPage FutureBuilder: No data received');
-                return const Center(child: Text('No plants found.'));
+                return const Center(
+                  child: Text(
+                    'Belum ada tanaman yang tersedia.',
+                    style: TextStyle(fontSize: 16, color: Colors.grey),
+                  ),
+                );
               } else {
                 final List<dynamic> plantItemsJson = snapshot.data!;
                 final List<Plant> plantItems =
@@ -561,134 +593,191 @@ class _HomePageBodyState extends State<HomePageBody> {
                   padding: const EdgeInsets.all(16),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
-                    childAspectRatio: 0.75,
+                    childAspectRatio: 0.7, // Adjusted for better proportions
                     crossAxisSpacing: 16,
                     mainAxisSpacing: 16,
                   ),
                   itemCount: plantItems.length,
                   itemBuilder: (context, index) {
                     final plant = plantItems[index];
-                    return Stack(
-                      children: [
-                        // The plant card
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => PlantDetail(plant: plant),
-                              ),
-                            );
-                          },
-                          child: Card(
-                            elevation: 4,
-                            clipBehavior: Clip.antiAlias,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Container(
-                                    color: Colors.green[100],
-                                    width: double.infinity,
-                                    child:
-                                        plant.image_url != null &&
-                                                plant.image_url!.isNotEmpty
-                                            ? Image.network(
-                                              plant.image_url!,
-                                              fit: BoxFit.cover,
-                                              errorBuilder: (
-                                                context,
-                                                error,
-                                                stackTrace,
-                                              ) {
-                                                return const Icon(
-                                                  Icons.broken_image,
-                                                  size: 50,
-                                                );
-                                              },
-                                            )
-                                            : const Icon(
-                                              Icons.image_not_supported,
-                                              size: 50,
-                                            ),
-                                  ),
+                    return Card(
+                      elevation: 5, // Increased elevation
+                      clipBehavior:
+                          Clip.antiAlias, // Important for rounded corners on image
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          15.0,
+                        ), // More rounded
+                      ),
+                      child: Stack(
+                        // Use Stack to overlay admin buttons
+                        children: [
+                          Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.stretch, // Stretch children
+                            children: [
+                              Expanded(
+                                flex: 3, // Give more space to image
+                                child: Container(
+                                  color: Colors.grey[200], // Placeholder color
+                                  child:
+                                      plant.image_url != null &&
+                                              plant.image_url!.isNotEmpty
+                                          ? Image.network(
+                                            plant.image_url!,
+                                            fit: BoxFit.cover,
+                                            loadingBuilder: (
+                                              BuildContext context,
+                                              Widget child,
+                                              ImageChunkEvent? loadingProgress,
+                                            ) {
+                                              if (loadingProgress == null)
+                                                return child;
+                                              return Center(
+                                                child: CircularProgressIndicator(
+                                                  value:
+                                                      loadingProgress
+                                                                  .expectedTotalBytes !=
+                                                              null
+                                                          ? loadingProgress
+                                                                  .cumulativeBytesLoaded /
+                                                              loadingProgress
+                                                                  .expectedTotalBytes!
+                                                          : null,
+                                                ),
+                                              );
+                                            },
+                                            errorBuilder: (
+                                              context,
+                                              error,
+                                              stackTrace,
+                                            ) {
+                                              return Icon(
+                                                Icons.broken_image_outlined,
+                                                size: 60,
+                                                color: Colors.grey[400],
+                                              );
+                                            },
+                                          )
+                                          : Icon(
+                                            Icons.image_not_supported_outlined,
+                                            size: 60,
+                                            color: Colors.grey[400],
+                                          ),
                                 ),
-                                Padding(
-                                  padding: const EdgeInsets.all(8.0),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        plant.name ?? 'No Name',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.all(
+                                  10.0,
+                                ), // Adjusted padding
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      plant.name ?? 'Nama Tidak Tersedia',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16.5, // Slightly larger
                                       ),
-                                      const SizedBox(height: 4),
-                                      FutureBuilder<String>(
-                                        future: _getFormattedPrice(
-                                          plant.price?.toDouble(),
-                                        ),
-                                        builder: (context, priceSnapshot) {
+                                      maxLines: 2, // Allow two lines for name
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 5),
+                                    FutureBuilder<String>(
+                                      future: _getFormattedPrice(
+                                        plant.price?.toDouble(),
+                                      ),
+                                      builder: (context, priceSnapshot) {
+                                        if (priceSnapshot.connectionState ==
+                                            ConnectionState.waiting) {
                                           return Text(
-                                            priceSnapshot.data ?? 'Loading...',
+                                            'Memuat harga...',
                                             style: TextStyle(
-                                              color: Colors.green[800],
-                                              fontWeight: FontWeight.w500,
+                                              color: Colors.grey[600],
+                                              fontSize: 14,
                                             ),
                                           );
-                                        },
-                                      ),
-                                    ],
-                                  ),
+                                        }
+                                        return Text(
+                                          priceSnapshot.data ??
+                                              'Harga Tidak Tersedia',
+                                          style: TextStyle(
+                                            color: Colors.green[700],
+                                            fontWeight:
+                                                FontWeight.w600, // Bolder price
+                                            fontSize: 15,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ],
                                 ),
-                              ],
+                              ),
+                            ],
+                          ),
+                          // Admin controls (Edit & Delete)
+                          if (_isAdmin)
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(
+                                    0.4,
+                                  ), // Semi-transparent background
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.edit, size: 18),
+                                      color:
+                                          Colors
+                                              .white, // White icon for contrast
+                                      onPressed: () => _editPlant(plant),
+                                      tooltip: 'Edit',
+                                      visualDensity: VisualDensity.compact,
+                                      splashRadius: 18,
+                                      padding: const EdgeInsets.all(6),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete, size: 18),
+                                      color:
+                                          Colors
+                                              .red[300], // Lighter red for contrast
+                                      onPressed:
+                                          () => _deletePlant(context, plant.id),
+                                      tooltip: 'Delete',
+                                      visualDensity: VisualDensity.compact,
+                                      splashRadius: 18,
+                                      padding: const EdgeInsets.all(6),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          // GestureDetector for onTap navigation
+                          Positioned.fill(
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(15.0),
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder:
+                                          (context) =>
+                                              PlantDetail(plant: plant),
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
                           ),
-                        ),
-                        // Admin controls (Edit & Delete)
-                        if (_isAdmin)
-                          Positioned(
-                            top: 5,
-                            right: 5,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.8),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Row(
-                                children: [
-                                  // Edit button
-                                  IconButton(
-                                    icon: const Icon(Icons.edit, size: 20),
-                                    color: Colors.blue,
-                                    onPressed: () => _editPlant(plant),
-                                    tooltip: 'Edit',
-                                    visualDensity: VisualDensity.compact,
-                                    splashRadius: 20,
-                                  ),
-                                  // Delete button
-                                  IconButton(
-                                    icon: const Icon(Icons.delete, size: 20),
-                                    color: Colors.red,
-                                    onPressed:
-                                        () => _deletePlant(context, plant.id),
-                                    tooltip: 'Delete',
-                                    visualDensity: VisualDensity.compact,
-                                    splashRadius: 20,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                      ],
+                        ],
+                      ),
                     );
                   },
                 );

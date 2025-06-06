@@ -17,22 +17,54 @@ class _SearchPageState extends State<SearchPage> {
   bool _hasSearched = false;
   String _errorMessage = '';
 
+  // Filter state variables
+  String? _selectedSizeCategory;
+  String? _selectedPriceCategory;
+  String? _selectedPlacement;
+
+  // Filter options
+  final List<String> _sizeCategories = ['Meja', 'Sedang', 'Besar'];
+  final List<String> _priceCategoriesLabels = ['Murah', 'Sedang', 'Mahal'];
+  final List<String> _placements = ['Indoor', 'Outdoor', 'Semi-outdoor'];
+
+  @override
+  void initState() {
+    super.initState();
+    // Load all plants when page first loads
+    _loadAllPlants();
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _performSearch(String query) async {
-    if (query.trim().isEmpty) {
-      setState(() {
-        _searchResults = [];
-        _hasSearched = false;
-        _errorMessage = '';
-      });
-      return;
-    }
+  Future<void> _loadAllPlants() async {
+    setState(() {
+      _isLoading = true;
+      _hasSearched = true;
+    });
 
+    try {
+      final results = await ApiService.getPlants();
+      final plants = results.map((json) => Plant.fromJson(json)).toList();
+
+      setState(() {
+        _searchResults = plants;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage =
+            'Terjadi kesalahan saat memuat tanaman: ${e.toString()}';
+        _searchResults = [];
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _performSearch(String query) async {
     setState(() {
       _isLoading = true;
       _errorMessage = '';
@@ -40,8 +72,17 @@ class _SearchPageState extends State<SearchPage> {
     });
 
     try {
-      final results = await ApiService.searchPlants(query.trim());
-      final plants = results.map((json) => Plant.fromJson(json)).toList();
+      List<dynamic> results;
+      if (query.trim().isNotEmpty) {
+        results = await ApiService.searchPlants(query.trim());
+      } else {
+        results = await ApiService.getPlants();
+      }
+
+      List<Plant> plants = results.map((json) => Plant.fromJson(json)).toList();
+
+      // Apply filters
+      plants = _applyFilters(plants);
 
       setState(() {
         _searchResults = plants;
@@ -56,13 +97,74 @@ class _SearchPageState extends State<SearchPage> {
     }
   }
 
+  bool _hasActiveFilters() {
+    return _selectedSizeCategory != null ||
+        _selectedPriceCategory != null ||
+        _selectedPlacement != null;
+  }
+
+  List<Plant> _applyFilters(List<Plant> plants) {
+    List<Plant> filteredPlants = plants;
+
+    // Filter by size category
+    if (_selectedSizeCategory != null) {
+      filteredPlants =
+          filteredPlants.where((plant) {
+            return plant.size_category?.toLowerCase() ==
+                _selectedSizeCategory?.toLowerCase();
+          }).toList();
+    }
+
+    // Filter by price category
+    if (_selectedPriceCategory != null) {
+      filteredPlants =
+          filteredPlants.where((plant) {
+            double price = plant.price?.toDouble() ?? 0;
+            switch (_selectedPriceCategory) {
+              case 'Murah':
+                return price < 50000;
+              case 'Sedang':
+                return price >= 50000 && price <= 150000;
+              case 'Mahal':
+                return price > 150000;
+              default:
+                return true;
+            }
+          }).toList();
+    }
+
+    // // Filter by placement
+    // if (_selectedPlacement != null) {
+    //   filteredPlants = filteredPlants.where((plant) {
+    //     return plant.placement?.toLowerCase() == _selectedPlacement?.toLowerCase();
+    //   }).toList();
+    // }
+
+    return filteredPlants;
+  }
+
   void _clearSearch() {
     _searchController.clear();
     setState(() {
-      _searchResults = [];
-      _hasSearched = false;
-      _errorMessage = '';
+      _selectedSizeCategory = null;
+      _selectedPriceCategory = null;
+      _selectedPlacement = null;
     });
+    // Reload all plants when clearing search
+    _loadAllPlants();
+  }
+
+  void _clearFilters() {
+    setState(() {
+      _selectedSizeCategory = null;
+      _selectedPriceCategory = null;
+      _selectedPlacement = null;
+    });
+    _performSearch(_searchController.text);
+  }
+
+  void _applyFilter() {
+    _performSearch(_searchController.text);
   }
 
   @override
@@ -126,7 +228,8 @@ class _SearchPageState extends State<SearchPage> {
                             }
                           });
                         } else {
-                          _clearSearch();
+                          // When search is cleared, show all plants
+                          _performSearch('');
                         }
                       },
                       onSubmitted: _performSearch,
@@ -148,6 +251,227 @@ class _SearchPageState extends State<SearchPage> {
             ),
           ),
 
+          // Filter Section
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: 12.0,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.filter_list, color: Colors.grey[600], size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Filter',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                    const Spacer(),
+                    if (_hasActiveFilters())
+                      TextButton(
+                        onPressed: _clearFilters,
+                        child: Text(
+                          'Hapus Filter',
+                          style: TextStyle(color: Colors.red[600]),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // Filter Dropdowns Row
+                Row(
+                  children: [
+                    // Size Category Dropdown
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Ukuran',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey[300]!),
+                              borderRadius: BorderRadius.circular(8),
+                              color: Colors.white,
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: _selectedSizeCategory,
+                                hint: Text(
+                                  'Pilih ukuran',
+                                  style: TextStyle(
+                                    color: Colors.grey[500],
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                isExpanded: true,
+                                items:
+                                    _sizeCategories.map((String size) {
+                                      return DropdownMenuItem<String>(
+                                        value: size,
+                                        child: Text(size),
+                                      );
+                                    }).toList(),
+                                onChanged: (String? newValue) {
+                                  setState(() {
+                                    _selectedSizeCategory = newValue;
+                                  });
+                                  _applyFilter();
+                                },
+                                icon: Icon(
+                                  Icons.keyboard_arrow_down,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    // Price Category Dropdown
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Harga',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey[300]!),
+                              borderRadius: BorderRadius.circular(8),
+                              color: Colors.white,
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: _selectedPriceCategory,
+                                hint: Text(
+                                  'Pilih harga',
+                                  style: TextStyle(
+                                    color: Colors.grey[500],
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                isExpanded: true,
+                                items:
+                                    _priceCategoriesLabels.map((String price) {
+                                      return DropdownMenuItem<String>(
+                                        value: price,
+                                        child: Text(price),
+                                      );
+                                    }).toList(),
+                                onChanged: (String? newValue) {
+                                  setState(() {
+                                    _selectedPriceCategory = newValue;
+                                  });
+                                  _applyFilter();
+                                },
+                                icon: Icon(
+                                  Icons.keyboard_arrow_down,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    // Placement Dropdown
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Penempatan',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey[300]!),
+                              borderRadius: BorderRadius.circular(8),
+                              color: Colors.white,
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: _selectedPlacement,
+                                hint: Text(
+                                  'Pilih tempat',
+                                  style: TextStyle(
+                                    color: Colors.grey[500],
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                isExpanded: true,
+                                items:
+                                    _placements.map((String placement) {
+                                      return DropdownMenuItem<String>(
+                                        value: placement,
+                                        child: Text(placement),
+                                      );
+                                    }).toList(),
+                                onChanged: (String? newValue) {
+                                  setState(() {
+                                    _selectedPlacement = newValue;
+                                  });
+                                  _applyFilter();
+                                },
+                                icon: Icon(
+                                  Icons.keyboard_arrow_down,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
           // Search Results
           Expanded(child: _buildSearchResults()),
         ],
@@ -157,25 +481,13 @@ class _SearchPageState extends State<SearchPage> {
 
   Widget _buildSearchResults() {
     if (!_hasSearched) {
-      return Center(
+      return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.search, size: 80, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'Cari tanaman favoritmu',
-              style: TextStyle(
-                fontSize: 18,
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Ketik nama tanaman pada kolom pencarian',
-              style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-            ),
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Memuat tanaman...'),
           ],
         ),
       );
@@ -249,8 +561,11 @@ class _SearchPageState extends State<SearchPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Coba dengan kata kunci yang berbeda',
+              _hasActiveFilters()
+                  ? 'Coba ubah filter atau kata kunci pencarian'
+                  : 'Coba dengan kata kunci yang berbeda',
               style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -262,13 +577,21 @@ class _SearchPageState extends State<SearchPage> {
       children: [
         Padding(
           padding: const EdgeInsets.all(16.0),
-          child: Text(
-            'Ditemukan ${_searchResults.length} tanaman',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: Colors.grey[700],
-            ),
+          child: Row(
+            children: [
+              Text(
+                'Ditemukan ${_searchResults.length} tanaman',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey[700],
+                ),
+              ),
+              if (_hasActiveFilters()) ...[
+                const SizedBox(width: 8),
+                Icon(Icons.filter_alt, size: 16, color: Colors.green[600]),
+              ],
+            ],
           ),
         ),
         Expanded(

@@ -187,15 +187,15 @@ class _SensorPageState extends State<SensorPage> {
   }
 
   String _getDirection(double heading) {
-    if (heading >= 337.5 || heading < 22.5) return 'N';
-    if (heading >= 22.5 && heading < 67.5) return 'NE';
-    if (heading >= 67.5 && heading < 112.5) return 'E';
-    if (heading >= 112.5 && heading < 157.5) return 'SE';
-    if (heading >= 157.5 && heading < 202.5) return 'S';
-    if (heading >= 202.5 && heading < 247.5) return 'SW';
-    if (heading >= 247.5 && heading < 292.5) return 'W';
-    if (heading >= 292.5 && heading < 337.5) return 'NW';
-    return 'N';
+    if (heading >= 337.5 || heading < 22.5) return 'S';
+    if (heading >= 22.5 && heading < 67.5) return 'SW';
+    if (heading >= 67.5 && heading < 112.5) return 'W';
+    if (heading >= 112.5 && heading < 157.5) return 'NW';
+    if (heading >= 157.5 && heading < 202.5) return 'N';
+    if (heading >= 202.5 && heading < 247.5) return 'NE';
+    if (heading >= 247.5 && heading < 292.5) return 'E';
+    if (heading >= 292.5 && heading < 337.5) return 'SE';
+    return 'S';
   }
 
   String _getSunlightRecommendation(String direction) {
@@ -572,12 +572,34 @@ class _SensorPageState extends State<SensorPage> {
                               // Compass needle
                               Transform.rotate(
                                 angle: _heading * pi / 180,
-                                child: Container(
+                                child: SizedBox(
                                   width: 4,
-                                  height: 60,
-                                  decoration: BoxDecoration(
-                                    color: Colors.red,
-                                    borderRadius: BorderRadius.circular(2),
+                                  height: 160,
+                                  child: Column(
+                                    children: [
+                                      Expanded(
+                                        child: Container(
+                                          width: 4,
+                                          decoration: BoxDecoration(
+                                            // color: Colors.red,
+                                            borderRadius: BorderRadius.circular(
+                                              2,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Container(
+                                          width: 4,
+                                          decoration: BoxDecoration(
+                                            color: Colors.red,
+                                            borderRadius: BorderRadius.circular(
+                                              2,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),

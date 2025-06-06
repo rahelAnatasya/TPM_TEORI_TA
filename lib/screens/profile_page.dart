@@ -11,7 +11,9 @@ import '../services/currency_service.dart';
 import 'login_page.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
+  final VoidCallback? onProfileUpdated;
+
+  const ProfilePage({super.key, this.onProfileUpdated});
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -138,26 +140,68 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _pickImage() async {
     try {
-      final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
-      if (image != null && _currentUser != null) {
-        // Update user profile picture path
-        final updatedUser = User(
-          id: _currentUser!.id,
-          username: _currentUser!.username,
-          email: _currentUser!.email,
-          password: _currentUser!.password,
-          profilePicturePath: image.path,
+      // Show dialog to choose between camera and gallery
+      final ImageSource? source = await showDialog<ImageSource>(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('Pilih Sumber Foto'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.camera_alt, color: Colors.blue),
+                  title: const Text('Kamera'),
+                  onTap: () => Navigator.pop(context, ImageSource.camera),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_library, color: Colors.green),
+                  title: const Text('Galeri'),
+                  onTap: () => Navigator.pop(context, ImageSource.gallery),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Batal'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (source != null) {
+        final XFile? image = await _picker.pickImage(
+          source: source,
+          imageQuality: 80, // Compress image quality
+          maxWidth: 800, // Limit image width
+          maxHeight: 800, // Limit image height
         );
 
-        await _authService.updateUser(updatedUser);
-        if (mounted) {
-          setState(() {
-            _currentUser = updatedUser;
-          });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Foto profil berhasil diperbarui')),
+        if (image != null && _currentUser != null) {
+          // Update user profile picture path
+          final updatedUser = User(
+            id: _currentUser!.id,
+            username: _currentUser!.username,
+            email: _currentUser!.email,
+            password: _currentUser!.password,
+            profilePicturePath: image.path,
           );
+
+          await _authService.updateUser(updatedUser);
+          if (mounted) {
+            setState(() {
+              _currentUser = updatedUser;
+            });
+
+            // Call the callback to update parent widget
+            widget.onProfileUpdated?.call();
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Foto profil berhasil diperbarui')),
+            );
+          }
         }
       }
     } catch (e) {
@@ -427,6 +471,9 @@ class _ProfilePageState extends State<ProfilePage> {
             _currentUser = updatedUser;
           });
 
+          // Call the callback to update parent widget
+          widget.onProfileUpdated?.call();
+
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Profil berhasil diperbarui')),
           );
@@ -474,17 +521,44 @@ class _ProfilePageState extends State<ProfilePage> {
                             children: [
                               GestureDetector(
                                 onTap: _pickImage,
-                                child: CircleAvatar(
-                                  radius: 40,
-                                  backgroundImage: _getProfileImage(),
-                                  child:
-                                      _currentUser?.profilePicturePath ==
-                                                  null ||
-                                              _currentUser!
-                                                  .profilePicturePath!
-                                                  .isEmpty
-                                          ? const Icon(Icons.person, size: 40)
-                                          : null,
+                                child: Stack(
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 40,
+                                      backgroundImage: _getProfileImage(),
+                                      child:
+                                          _currentUser?.profilePicturePath ==
+                                                      null ||
+                                                  _currentUser!
+                                                      .profilePicturePath!
+                                                      .isEmpty
+                                              ? const Icon(
+                                                Icons.person,
+                                                size: 40,
+                                              )
+                                              : null,
+                                    ),
+                                    Positioned(
+                                      bottom: 0,
+                                      right: 0,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.blue,
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color: Colors.white,
+                                            width: 2,
+                                          ),
+                                        ),
+                                        child: const Icon(
+                                          Icons.camera_alt,
+                                          color: Colors.white,
+                                          size: 16,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                               const SizedBox(width: 16),

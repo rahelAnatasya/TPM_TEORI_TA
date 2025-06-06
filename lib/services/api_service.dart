@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import '../models/plant.dart';
 
 class ApiService {
-  static String url = "https://flora-shop-gules.vercel.app/api/v1/plants";
+  static String url = "https://flora-shop-2.vercel.app/api/v1/plants";
 
   static Future<List<dynamic>> getPlants() async {
     try {
